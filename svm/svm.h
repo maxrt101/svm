@@ -48,6 +48,9 @@ extern "C" {
 /* Enums ==================================================================== */
 /**
  * Registers
+ *
+ * SVM has 16 general purpose registers (r0-r15) all can be used by user code,
+ * none have a special usage
  */
 typedef enum {
   R0 = 0,
@@ -74,45 +77,61 @@ typedef enum {
  * Opcodes
  */
 typedef enum {
-  OP_NOP = 0,
-  OP_END,
-  OP_MOV,
-  OP_ADD,
-  OP_SUB,
-  OP_MUL,
-  OP_DIV,
-  OP_CMP,
-  OP_CLF,
-  OP_JMP,
-  OP_INV,
-  OP_RET,
-  OP_SYS,
+  OP_NOP = 0, /** NoOperation - does nothing */
 
-  OP_MAX
+  OP_END,     /** Terminates execution */
+  OP_MOV,     /** Move value to register / register to register */
+
+  OP_ADD,     /** Adds 2 operands, result stored in first */
+  OP_SUB,     /** Subtracts 2 operands, result stored in first */
+  OP_MUL,     /** Multiplies 2 operands, result stored in first */
+  OP_DIV,     /** Divides 2 operands, result stored in first */
+  OP_AND,     /** */
+  OP_OR,      /** */
+  OP_XOR,     /** */
+  OP_SHL,     /** */
+  OP_SHR,     /** */
+  // and [lhs: R, rhs: R | IMM]
+  // or  [lhs: R, rhs: R | IMM]
+  // xor [lhs: R, rhs: R | IMM]
+  // shl [lhs: R, rhs: R | IMM]
+  // shr [lhs: R, rhs: R | IMM]
+
+  OP_CMP,     /** Compare values, sets appropriate flags for conditional execution */
+  OP_CLF,     /** Clears specified flag, or all */
+
+  OP_JMP,     /** Jump to address */
+  OP_INV,     /** Invoke. Jump to address, and push PC to call stack */
+  OP_RET,     /** Restore most recent PC from call stack */
+
+  OP_SYS,     /** System Call (handled by svm_port_sys) */
+
+  OP_MAX      /** Special marker to get count of instructions */
 } svm_opcode_t;
 
 /**
  * Instruction extensions
  */
 typedef enum {
-  EXT_NONE = 0,
-  EXT_EQ,
-  EXT_NE,
-  EXT_LT,
-  EXT_LE,
-  EXT_GT,
-  EXT_GE,
-  EXT_NZ,
-  EXT_Z,
+  EXT_NONE = 0, /** No extension flag */
 
-  EXT_MAX
+  EXT_EQ,       /** Executes instruction only if EQ flag is set */
+  EXT_NE,       /** Executes instruction only if NE flag is set */
+  EXT_LT,       /** Executes instruction only if LT flag is set */
+  EXT_LE,       /** Executes instruction only if LE flag is set */
+  EXT_GT,       /** Executes instruction only if GT flag is set */
+  EXT_GE,       /** Executes instruction only if GE flag is set */
+  EXT_NZ,       /** Executes instruction only if NZ flag is set */
+  EXT_Z,        /** Executes instruction only if Z flag is set */
+
+  EXT_MAX       /** Special marker to get count of extension flags */
 } svm_ext_t;
 
 /**
  * Arguments
  */
 typedef enum {
-  ARG_NONE = 0,
+  ARG_NONE = 0, /** No argument is present */
   ARG_R0,
   ARG_R1,
   ARG_R2,
@@ -129,9 +148,9 @@ typedef enum {
   ARG_R13,
   ARG_R14,
   ARG_R15,
-  ARG_IMM,
+  ARG_IMM,      /** Immediate value is present in next i32 */
 
-  ARG_MAX
+  ARG_MAX       /** Special marker to get count of args */
 } svm_arg_type_t;
 
 /**
@@ -153,6 +172,8 @@ typedef enum {
 /* Types ==================================================================== */
 /**
  * Instruction
+ *
+ * TODO: Optimize size
  */
 typedef struct __PACKED {
   svm_opcode_t op     : 8;
@@ -165,13 +186,13 @@ typedef struct __PACKED {
  * SVM Runtime Context
  */
 typedef struct {
-  struct {
+  struct __PACKED {
     bool running  : 1;      /** Is VM running flag */
     bool eq       : 1;      /** Equality flag */
     bool ne       : 1;      /** Not Equal flag */
     bool lt       : 1;      /** Less Than flag */
     bool le       : 1;      /** Less Equals flag */
-    bool gt       : 1;      /** Greater Then flag */
+    bool gt       : 1;      /** Greater Than flag */
     bool ge       : 1;      /** Greater Equals flag */
     bool nz       : 1;      /** Not Zero flag */
     bool z        : 1;      /** Zero flag */

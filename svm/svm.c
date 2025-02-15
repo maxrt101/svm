@@ -248,7 +248,63 @@ svm_error_t svm_cycle(svm_t * vm) {
       break;
     }
 
+    case OP_AND: {
+      int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
+      if (svm_check_condition(vm, instruction->ext)) {
+        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+        vm->registers[reg] &= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+      }
+      break;
+    }
+
+    case OP_OR: {
+      int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
+      if (svm_check_condition(vm, instruction->ext)) {
+        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+        vm->registers[reg] |= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+      }
+      break;
+    }
+
+    case OP_XOR: {
+      int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
+      if (svm_check_condition(vm, instruction->ext)) {
+        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+        vm->registers[reg] ^= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+      }
+      break;
+    }
+
+    case OP_SHL: {
+      int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
+      if (svm_check_condition(vm, instruction->ext)) {
+        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+        vm->registers[reg] <<= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+      }
+      break;
+    }
+
+    case OP_SHR: {
+      int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
+      if (svm_check_condition(vm, instruction->ext)) {
+        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+        vm->registers[reg] >>= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+      }
+      break;
+    }
+
     case OP_CMP: {
+      // TODO: svm_set_flag_by_ext(vm, EXT_NONE, false);
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
 

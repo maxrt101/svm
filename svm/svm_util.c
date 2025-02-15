@@ -29,6 +29,11 @@ const char * svm_opcode2str(svm_opcode_t op) {
     case OP_SUB: return "SUB";
     case OP_MUL: return "MUL";
     case OP_DIV: return "DIV";
+    case OP_AND: return "AND";
+    case OP_OR:  return "OR";
+    case OP_XOR: return "XOR";
+    case OP_SHL: return "SHL";
+    case OP_SHR: return "SHR";
     case OP_CMP: return "CMP";
     case OP_CLF: return "CLF";
     case OP_JMP: return "JMP";
@@ -180,6 +185,16 @@ svm_opcode_t svm_str2opcode(const char * str) {
     return OP_MUL;
   } else if (!strcmp(str, "div")) {
     return OP_DIV;
+  } else if (!strcmp(str, "and")) {
+    return OP_AND;
+  } else if (!strcmp(str, "or")) {
+    return OP_OR;
+  } else if (!strcmp(str, "xor")) {
+    return OP_XOR;
+  } else if (!strcmp(str, "shl")) {
+    return OP_SHL;
+  } else if (!strcmp(str, "shr")) {
+    return OP_SHR;
   } else if (!strcmp(str, "cmp")) {
     return OP_CMP;
   } else if (!strcmp(str, "clf")) {
