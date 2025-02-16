@@ -239,8 +239,13 @@ svm_asm_error_t svm_asm(svm_asm_t * ctx, char * source) {
 
   while (*source) {
     if (*source == '#') {
-      while (*source != '\n' || *source != '\0') {
+      while (*source != '\n' && *source != '\0') {
         source++;
+
+        if (source >= source_end) {
+          // TODO: Is this semantically correct error to return?
+          return SVM_ASM_ERR_EXPECTED_TOKEN;
+        }
       }
     }
     
