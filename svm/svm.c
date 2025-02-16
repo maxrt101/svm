@@ -11,6 +11,7 @@
 #include "svm.h"
 #include "svm_util.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Defines ================================================================== */
@@ -27,7 +28,7 @@ static int32_t svm_get_arg_value(svm_t * vm, svm_arg_type_t type) {
     svm_register_t reg = svm_arg_to_reg(type);
     return reg < R_MAX ? vm->registers[reg] : 0;
   } else if (type == ARG_IMM) {
-    return vm->code.buffer[vm->pc++];
+    return vm->code->buffer[vm->pc++];
   } else {
     // TODO: Signal error
     return 0;
@@ -146,13 +147,26 @@ svm_error_t svm_init(svm_t * vm, void * ctx) {
   return SVM_OK;
 }
 
-svm_error_t svm_load(svm_t * vm, int32_t * buffer, uint32_t size) {
-  SVM_ASSERT_RETURN(vm && buffer && size, SVM_ERR_NULL);
+svm_error_t svm_load(svm_t * vm, svm_code_t * code) {
+  SVM_ASSERT_RETURN(vm && code, SVM_ERR_NULL);
 
-  vm->code.buffer = buffer;
-  vm->code.size = size;
+  vm->code = code;
   vm->pc = 0;
   vm->flags.running = true;
+
+  if (vm->call_stack.buffer) {
+    free(vm->call_stack.buffer);
+  }
+
+  vm->call_stack.size = code->meta.call_stack_size ? code->meta.call_stack_size : SVM_CALL_STACK_INIT_SIZE;
+  SVM_REALLOC_CHECK(vm->call_stack.buffer, vm->call_stack.size);
+
+  if (vm->stack.buffer) {
+    free(vm->stack.buffer);
+  }
+
+  vm->stack.size = code->meta.stack_size ? code->meta.stack_size : SVM_STACK_INIT_SIZE;
+  SVM_REALLOC_CHECK(vm->stack.buffer, vm->stack.size);
 
   return SVM_OK;
 }
@@ -164,12 +178,12 @@ svm_error_t svm_cycle(svm_t * vm) {
     return SVM_ERR_NOT_RUNNING;
   }
 
-  if (vm->pc >= vm->code.size) {
+  if (vm->pc >= vm->code->size) {
     vm->flags.running = false;
     return SVM_ERR_CODE_OVERFLOW;
   }
 
-  svm_instruction_t * instruction = (svm_instruction_t *) &vm->code.buffer[vm->pc++];
+  svm_instruction_t * instruction = (svm_instruction_t *) &vm->code->buffer[vm->pc++];
 
 #if USE_SVM_DEBUG_CYCLE
   printf(
@@ -177,8 +191,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       vm->pc - 1,
       svm_opcode2str(instruction->op),
       svm_ext2str(instruction->ext, true),
-      svm_get_arg_str(vm->code.buffer, vm->pc, instruction->arg1, false),
-      svm_get_arg_str(vm->code.buffer, vm->pc, instruction->arg2, instruction->arg1 == ARG_IMM)
+      svm_get_arg_str(vm->code->buffer, vm->pc, instruction->arg1, false),
+      svm_get_arg_str(vm->code->buffer, vm->pc, instruction->arg2, instruction->arg1 == ARG_IMM)
   );
 #endif
 
@@ -343,7 +357,7 @@ svm_error_t svm_cycle(svm_t * vm) {
     case OP_JMP: {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
       if (svm_check_condition(vm, instruction->ext)) {
-        if (arg1 < vm->code.size) {
+        if (arg1 < vm->code->size) {
           vm->pc = arg1;
         } else {
           return SVM_ERR_JMP_OVERFLOW;
@@ -355,11 +369,11 @@ svm_error_t svm_cycle(svm_t * vm) {
     case OP_INV: {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
       if (svm_check_condition(vm, instruction->ext)) {
-        if (vm->rpc + 1 >= SVM_CALL_STACK_SIZE) {
+        if (vm->rpc + 1 >= vm->call_stack.size) {
           return SVM_ERR_CALL_STK_OVERFLOW;
         }
-        vm->call_stack[vm->rpc++] = vm->pc;
-        if (arg1 < vm->code.size) {
+        vm->call_stack.buffer[vm->rpc++] = vm->pc;
+        if (arg1 < vm->code->size) {
           vm->pc = arg1;
         } else {
           return SVM_ERR_JMP_OVERFLOW;
@@ -370,7 +384,7 @@ svm_error_t svm_cycle(svm_t * vm) {
 
     case OP_RET: {
       if (vm->rpc > 0) {
-        vm->pc = vm->call_stack[--vm->rpc];
+        vm->pc = vm->call_stack.buffer[--vm->rpc];
       } else {
         return SVM_ERR_CALL_STK_UNDERFLOW;
       }
@@ -378,7 +392,7 @@ svm_error_t svm_cycle(svm_t * vm) {
     }
 
     case OP_SYS: {
-      svm_port_sys(vm->ctx, &vm->registers, svm_get_arg_value(vm, instruction->arg1));
+      svm_sys_handler(vm->ctx, &vm->registers, svm_get_arg_value(vm, instruction->arg1));
       break;
     }
 
@@ -438,4 +452,20 @@ void svm_disassemble(int32_t * buffer, uint32_t size) {
       index++;
     }
   }
+}
+
+__WEAK void * svm_malloc(size_t size) {
+  return malloc(size);
+}
+
+__WEAK void svm_free(void * buffer) {
+  free(buffer);
+}
+
+__WEAK void * svm_realloc(void * buffer, size_t size) {
+  return realloc(buffer, size);
+}
+
+__WEAK void svm_sys_handler(void * ctx, int32_t (*registers)[R_MAX], int32_t syscall_num) {
+  // Does nothing
 }

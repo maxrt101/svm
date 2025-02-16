@@ -64,7 +64,7 @@ extern "C" {
  */
 #define SVM_REALLOC_CHECK_IMPL(new_buf_var, buffer, new_size)             \
   do {                                                                    \
-    void * new_buf_var = realloc(buffer, new_size);                       \
+    void * new_buf_var = svm_realloc(buffer, new_size);                   \
     if (!new_buf_var) {                                                   \
       printf("FATAL: Allocation failed (%s:%d)", __FUNCTION__, __LINE__); \
       abort();                                                            \

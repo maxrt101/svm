@@ -15,6 +15,7 @@ extern "C" {
 /* Includes ================================================================= */
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 /* Defines ================================================================== */
 /**
@@ -38,10 +39,17 @@ extern "C" {
 #endif
 
 /**
- * Provides definition for call stack size, if not provided
+ * Provides definition for call stack initial size, if not provided
  */
-#ifndef SVM_CALL_STACK_SIZE
-#define SVM_CALL_STACK_SIZE 8
+#ifndef SVM_CALL_STACK_INIT_SIZE
+#define SVM_CALL_STACK_INIT_SIZE 8
+#endif
+
+/**
+ * Provides definition for call stack initial size, if not provided
+ */
+#ifndef SVM_STACK_INIT_SIZE
+#define SVM_STACK_INIT_SIZE 32
 #endif
 
 /* Macros =================================================================== */
@@ -86,16 +94,11 @@ typedef enum {
   OP_SUB,     /** Subtracts 2 operands, result stored in first */
   OP_MUL,     /** Multiplies 2 operands, result stored in first */
   OP_DIV,     /** Divides 2 operands, result stored in first */
-  OP_AND,     /** */
-  OP_OR,      /** */
-  OP_XOR,     /** */
-  OP_SHL,     /** */
-  OP_SHR,     /** */
-  // and [lhs: R, rhs: R | IMM]
-  // or  [lhs: R, rhs: R | IMM]
-  // xor [lhs: R, rhs: R | IMM]
-  // shl [lhs: R, rhs: R | IMM]
-  // shr [lhs: R, rhs: R | IMM]
+  OP_AND,     /** Performs binary AND */
+  OP_OR,      /** Performs binary OR */
+  OP_XOR,     /** Performs binary XOR */
+  OP_SHL,     /** Performs left shift */
+  OP_SHR,     /** Performs right shift */
 
   OP_CMP,     /** Compare values, sets appropriate flags for conditional execution */
   OP_CLF,     /** Clears specified flag, or all */
@@ -171,6 +174,14 @@ typedef enum {
 
 /* Types ==================================================================== */
 /**
+ *
+ */
+typedef struct {
+  int32_t * buffer;
+  uint32_t  size;
+} svm_i32_buffer_t;
+
+/**
  * Instruction
  *
  * TODO: Optimize size
@@ -182,34 +193,46 @@ typedef struct __PACKED {
   svm_arg_type_t arg2 : 8;
 } svm_instruction_t;
 
+
+/**
+ * SVM Compiler code block
+ */
+typedef struct {
+  int32_t * buffer;
+  uint32_t  size;
+
+  struct {
+    uint32_t call_stack_size;
+    uint32_t stack_size;
+  } meta;
+} svm_code_t;
+
 /**
  * SVM Runtime Context
  */
 typedef struct {
   struct __PACKED {
-    bool running  : 1;      /** Is VM running flag */
-    bool eq       : 1;      /** Equality flag */
-    bool ne       : 1;      /** Not Equal flag */
-    bool lt       : 1;      /** Less Than flag */
-    bool le       : 1;      /** Less Equals flag */
-    bool gt       : 1;      /** Greater Than flag */
-    bool ge       : 1;      /** Greater Equals flag */
-    bool nz       : 1;      /** Not Zero flag */
-    bool z        : 1;      /** Zero flag */
+    bool running  : 1;          /** Is VM running flag */
+    bool eq       : 1;          /** Equality flag */
+    bool ne       : 1;          /** Not Equal flag */
+    bool lt       : 1;          /** Less Than flag */
+    bool le       : 1;          /** Less Equals flag */
+    bool gt       : 1;          /** Greater Than flag */
+    bool ge       : 1;          /** Greater Equals flag */
+    bool nz       : 1;          /** Not Zero flag */
+    bool z        : 1;          /** Zero flag */
   } flags;
 
-  uint32_t pc;              /** Program Counter */
-  uint32_t rpc;             /** Return Program Counter */
-  int32_t registers[R_MAX]; /** Registers */
+  uint32_t pc;                  /** Program Counter */
+  uint32_t rpc;                 /** Return Program Counter */
+  int32_t registers[R_MAX];     /** Registers */
 
-  int32_t call_stack[SVM_CALL_STACK_SIZE];
+  svm_i32_buffer_t stack;       /** Program Stack */
+  svm_i32_buffer_t call_stack;  /** Call Stack */
 
-  struct {
-    int32_t * buffer;
-    uint32_t  size;
-  } code;                   /** Executable code buffer */
+  svm_code_t * code;            /** Executable code context */
 
-  void * ctx;               /** User context for svm_sys_port */
+  void * ctx;                   /** User context for svm_sys_port */
 } svm_t;
 
 /* Variables ================================================================ */
@@ -229,13 +252,12 @@ svm_error_t svm_init(svm_t * vm, void * ctx);
  * Load instruction buffer into the VM
  *
  * @param vm SVM Context
- * @param buffer int32_t buffer of instructions
- * @param size Buffer size
+ * @param code SVM Compiler code context
  *
  * @retval SVM_OK If operation completed successfully
  * @retval SVM_ERR_NULL If pointer to vm or buffer is NULL, or size is 0
  */
-svm_error_t svm_load(svm_t * vm, int32_t * buffer, uint32_t size);
+svm_error_t svm_load(svm_t * vm, svm_code_t * code);
 
 /**
  * Run VM for 1 cycle
@@ -287,13 +309,47 @@ int32_t svm_instruction_to_int32(svm_instruction_t instruction);
 void svm_disassemble(int32_t * buffer, uint32_t size);
 
 /**
+ * Re-definable malloc wrapper
+ *
+ * @note Calls libc malloc by default
+ *
+ * @param size Size in bytes of requested buffer
+ *
+ * @returns void pointer to allocated buffer
+ * @retval NULL if allocation failed
+ */
+void * svm_malloc(size_t size);
+
+/**
+ * Re-definable free wrapper
+ *
+ * @note Calls libc free by default
+ *
+ * @param buffer Buffer, previously allocated with svm_malloc, to be freed
+ */
+void svm_free(void * buffer);
+
+/**
+  * Re-definable realloc wrapper
+ *
+ * @note Calls libc realloc by default
+ *
+ * @param buffer Buffer, previously allocated with svm_malloc, to be reallocated
+ * @param size Size in bytes of requested buffer
+ *
+ * @returns void pointer to allocated buffer
+ * @retval NULL if allocation failed
+ */
+void * svm_realloc(void * buffer, size_t size);
+
+/**
  * Port for syscalls
  *
  * @param ctx User context
  * @param registers Registers array
  * @param syscall_num Syscall number
  */
-void svm_port_sys(void * ctx, int32_t (*registers)[R_MAX], int32_t syscall_num);
+void svm_sys_handler(void * ctx, int32_t (*registers)[R_MAX], int32_t syscall_num);
 
 #ifdef __cplusplus
 }

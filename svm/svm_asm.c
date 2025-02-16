@@ -199,7 +199,7 @@ svm_asm_error_t svm_asm_init(svm_asm_t * ctx) {
   memset(ctx, 0, sizeof(*ctx));
 
   ctx->code.capacity = 32;
-  ctx->code.buffer = malloc(ctx->code.capacity * sizeof(typeof(ctx->code.buffer[0])));
+  ctx->code.buffer = svm_malloc(ctx->code.capacity * sizeof(typeof(ctx->code.buffer[0])));
 
   if (!ctx->code.buffer) {
     printf("Failed to allocate buffer for bytecode\n");
@@ -207,7 +207,7 @@ svm_asm_error_t svm_asm_init(svm_asm_t * ctx) {
   }
 
   ctx->labels.capacity = 8;
-  ctx->labels.buffer = malloc(ctx->labels.capacity);
+  ctx->labels.buffer = svm_malloc(ctx->labels.capacity);
 
   if (!ctx->labels.buffer) {
     printf("Failed to allocate buffer for labels\n");
@@ -219,15 +219,15 @@ svm_asm_error_t svm_asm_init(svm_asm_t * ctx) {
 
 svm_asm_error_t svm_asm_free(svm_asm_t * ctx) {
   if (ctx->code.buffer) {
-    free(ctx->code.buffer);
+    svm_free(ctx->code.buffer);
   }
 
   if (ctx->labels.buffer) {
-    free(ctx->labels.buffer);
+    svm_free(ctx->labels.buffer);
   }
 
   if (ctx->patches.buffer) {
-    free(ctx->patches.buffer);
+    svm_free(ctx->patches.buffer);
   }
 
   return SVM_ASM_OK;
@@ -337,7 +337,7 @@ svm_asm_error_t svm_asm_file(svm_asm_t * ctx, const char * filename) {
   uint32_t fsize = ftell(file);
   fseek(file, 0, SEEK_SET);
 
-  char * source = malloc(fsize + 1);
+  char * source = svm_malloc(fsize + 1);
   fread(source, fsize, 1, file);
   fclose(file);
 

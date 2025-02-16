@@ -165,7 +165,8 @@ int main(int argc, char ** argv) {
 
         svm_t vm;
         svm_init(&vm, &screen);
-        svm_load(&vm, ctx.code.buffer, ctx.code.size);
+        svm_code_t code = {ctx.code.buffer, ctx.code.size};
+        svm_load(&vm, &code);
 
         printf("Execution:\n");
 
