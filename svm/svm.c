@@ -21,10 +21,14 @@
 /* Types ==================================================================== */
 /* Variables ================================================================ */
 /* Private functions ======================================================== */
+static bool svm_is_arg_register(svm_arg_type_t type) {
+  return type > ARG_NONE && type < ARG_IMM;
+}
+
 static int32_t svm_get_arg_value(svm_t * vm, svm_arg_type_t type) {
   SVM_ASSERT_RETURN(vm, SVM_ERR_NULL);
 
-  if (type > ARG_NONE && type < ARG_IMM) {
+  if (svm_is_arg_register(type)) {
     svm_register_t reg = svm_arg_to_reg(type);
     return reg < R_MAX ? vm->task.current->registers[reg] : 0;
   } else if (type == ARG_IMM) {
@@ -212,112 +216,233 @@ svm_error_t svm_cycle(svm_t * vm) {
 
     case OP_MOV: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] = arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] = arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      break;
+    }
+
+    case OP_PUSH: {
+      int32_t arg1 = 0;
+
+      // If arg1 is immediate, load it's value from code buffer
+      if (instruction->arg1 == ARG_IMM) {
+        arg1 = svm_get_arg_value(vm, instruction->arg1);
+      }
+
+      // If condition flag isn't set - return
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
+      }
+
+      // If arg1 is immediate, push single value to stack
+      if (instruction->arg1 == ARG_IMM) {
+        if (vm->task.current->sp + 1 >= vm->task.current->stack.size) {
+          return SVM_ERR_STK_OVERFLOW;
+        }
+        vm->task.current->stack.buffer[vm->task.current->sp++] = arg1;
+        break;
+      }
+
+      // If there is no arg2, only need to push 1 register
+      if (instruction->arg2 == ARG_NONE) {
+        register_t reg = svm_arg_to_reg(instruction->arg1);
+
+        if (vm->task.current->sp + 1 >= vm->task.current->stack.size) {
+          return SVM_ERR_STK_OVERFLOW;
+        }
+
+        vm->task.current->stack.buffer[vm->task.current->sp++] = vm->task.current->registers[reg];
+        break;
+      }
+
+      // Push range (arg1-arg2)
+      register_t from = svm_arg_to_reg(instruction->arg1), to = svm_arg_to_reg(instruction->arg2);
+      SVM_ASSERT_RETURN(from < to, SVM_ERR_PUSH_ARG_BAD_ORDER);
+
+      if (vm->task.current->sp + to - from >= vm->task.current->stack.size) {
+        return SVM_ERR_STK_OVERFLOW;
+      }
+
+      for (register_t r = from; r <= to; r++) {
+        vm->task.current->stack.buffer[vm->task.current->sp++] = vm->task.current->registers[r];
+      }
+
+      break;
+    }
+
+    case OP_POP: {
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
+      }
+
+      if (svm_is_arg_register(instruction->arg1) && instruction->arg2 == ARG_NONE) {
+        if (vm->task.current->sp < 1) {
+          return SVM_ERR_STK_UNDERFLOW;
+        }
+
+        register_t reg = svm_arg_to_reg(instruction->arg1);
+
+        vm->task.current->registers[reg] = vm->task.current->stack.buffer[vm->task.current->sp--];
+        break;
+      }
+
+      SVM_ASSERT_RETURN(svm_is_arg_register(instruction->arg1), SVM_ERR_ARG_NOT_REG);
+      SVM_ASSERT_RETURN(svm_is_arg_register(instruction->arg2), SVM_ERR_ARG_NOT_REG);
+
+      register_t from = svm_arg_to_reg(instruction->arg1), to = svm_arg_to_reg(instruction->arg2);
+      SVM_ASSERT_RETURN(from < to, SVM_ERR_PUSH_ARG_BAD_ORDER);
+
+      if (vm->task.current->sp < to - from) {
+        return SVM_ERR_STK_UNDERFLOW;
+      }
+
+      for (register_t r = to; r >= from ; r--) {
+        vm->task.current->registers[r] = vm->task.current->stack.buffer[--vm->task.current->sp];
+      }
+
       break;
     }
 
     case OP_ADD: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] += arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] += arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_SUB: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] -= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
 
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] -= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_MUL: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] *= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] *= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_DIV: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] /= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] /= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_AND: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] &= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] &= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_OR: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] |= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] |= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_XOR: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] ^= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] ^= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_SHL: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] <<= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] <<= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
     case OP_SHR: {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
-      if (svm_check_condition(vm, instruction->ext)) {
-        svm_register_t reg = svm_arg_to_reg(instruction->arg1);
-        SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->task.current->registers[reg] >>= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      svm_register_t reg = svm_arg_to_reg(instruction->arg1);
+      SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
+      vm->task.current->registers[reg] >>= arg2;
+      svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
+
       break;
     }
 
@@ -360,29 +485,39 @@ svm_error_t svm_cycle(svm_t * vm) {
 
     case OP_JMP: {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
-      if (svm_check_condition(vm, instruction->ext)) {
-        if (arg1 < vm->code->size) {
-          vm->task.current->pc = arg1;
-        } else {
-          return SVM_ERR_JMP_OVERFLOW;
-        }
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      if (arg1 < vm->code->size) {
+        vm->task.current->pc = arg1;
+      } else {
+        return SVM_ERR_JMP_OVERFLOW;
+      }
+
       break;
     }
 
     case OP_INV: {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
-      if (svm_check_condition(vm, instruction->ext)) {
-        if (vm->task.current->rpc + 1 >= vm->task.current->call_stack.size) {
-          return SVM_ERR_CALL_STK_OVERFLOW;
-        }
-        vm->task.current->call_stack.buffer[vm->task.current->rpc++] = vm->task.current->pc;
-        if (arg1 < vm->code->size) {
-          vm->task.current->pc = arg1;
-        } else {
-          return SVM_ERR_JMP_OVERFLOW;
-        }
+
+      if (!svm_check_condition(vm, instruction->ext)) {
+        break;
       }
+
+      if (vm->task.current->rpc + 1 >= vm->task.current->call_stack.size) {
+        return SVM_ERR_CALL_STK_OVERFLOW;
+      }
+
+      vm->task.current->call_stack.buffer[vm->task.current->rpc++] = vm->task.current->pc;
+
+      if (arg1 < vm->code->size) {
+        vm->task.current->pc = arg1;
+      } else {
+        return SVM_ERR_JMP_OVERFLOW;
+      }
+
       break;
     }
 

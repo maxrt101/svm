@@ -22,25 +22,27 @@
 /* Shared functions ========================================================= */
 const char * svm_opcode2str(svm_opcode_t op) {
   switch (op) {
-    case OP_NOP: return "NOP";
-    case OP_END: return "END";
-    case OP_MOV: return "MOV";
-    case OP_ADD: return "ADD";
-    case OP_SUB: return "SUB";
-    case OP_MUL: return "MUL";
-    case OP_DIV: return "DIV";
-    case OP_AND: return "AND";
-    case OP_OR:  return "OR";
-    case OP_XOR: return "XOR";
-    case OP_SHL: return "SHL";
-    case OP_SHR: return "SHR";
-    case OP_CMP: return "CMP";
-    case OP_CLF: return "CLF";
-    case OP_JMP: return "JMP";
-    case OP_INV: return "INV";
-    case OP_RET: return "RET";
-    case OP_SYS: return "SYS";
-    case OP_MAX: return "<MAX>";
+    case OP_NOP:  return "NOP";
+    case OP_END:  return "END";
+    case OP_MOV:  return "MOV";
+    case OP_PUSH: return "PUSH";
+    case OP_POP:  return "POP";
+    case OP_ADD:  return "ADD";
+    case OP_SUB:  return "SUB";
+    case OP_MUL:  return "MUL";
+    case OP_DIV:  return "DIV";
+    case OP_AND:  return "AND";
+    case OP_OR:   return "OR";
+    case OP_XOR:  return "XOR";
+    case OP_SHL:  return "SHL";
+    case OP_SHR:  return "SHR";
+    case OP_CMP:  return "CMP";
+    case OP_CLF:  return "CLF";
+    case OP_JMP:  return "JMP";
+    case OP_INV:  return "INV";
+    case OP_RET:  return "RET";
+    case OP_SYS:  return "SYS";
+    case OP_MAX:  return "<MAX>";
     default:
       return "<?>";
   }
@@ -177,6 +179,10 @@ svm_opcode_t svm_str2opcode(const char * str) {
     return OP_END;
   } else if (!strcmp(str, "mov")) {
     return OP_MOV;
+  } else if (!strcmp(str, "push")) {
+    return OP_PUSH;
+  } else if (!strcmp(str, "pop")) {
+    return OP_POP;
   } else if (!strcmp(str, "add")) {
     return OP_ADD;
   } else if (!strcmp(str, "sub")) {

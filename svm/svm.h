@@ -96,6 +96,8 @@ typedef enum {
 
   OP_END,     /** Terminates execution */
   OP_MOV,     /** Move value to register / register to register */
+  OP_PUSH,    /** Push specified register range (or immediate value) to stack */
+  OP_POP,     /** Pop register range from stack */
 
   OP_ADD,     /** Adds 2 operands, result stored in first */
   OP_SUB,     /** Subtracts 2 operands, result stored in first */
@@ -174,12 +176,15 @@ typedef enum {
   SVM_ERR_NOT_RUNNING,          /** Runtime Not Running */
   SVM_ERR_CODE_OVERFLOW,        /** Overflow in code */
   SVM_ERR_ARG_NOT_REG,          /** Expected register */
+  SVM_ERR_PUSH_ARG_BAD_ORDER,   /** Higher register is first argument to push */
   SVM_ERR_JMP_OVERFLOW,         /** Overflow in code during jump */
   SVM_ERR_CALL_STK_OVERFLOW,    /** Overflow in call stack */
   SVM_ERR_CALL_STK_UNDERFLOW,   /** Underflow in call stack */
-  SVM_ERR_UNKNOWN_INSTRUCTION,  /** Unknown instruction */
+  SVM_ERR_STK_OVERFLOW,         /** Overflow in stack */
+  SVM_ERR_STK_UNDERFLOW,        /** Underflow in stack */
   SVM_ERR_TASK_NOT_FOUND,       /** Requested task not found */
   SVM_ERR_TASK_SWITCH_BLOCKED,  /** Task switching requested, but it's blocked externally */
+  SVM_ERR_UNKNOWN_INSTRUCTION,  /** Unknown instruction */
 } svm_error_t;
 
 /* Types ==================================================================== */
@@ -236,6 +241,7 @@ typedef struct svm_task_t {
 
   uint32_t pc;                  /** Program Counter (index into code) */
   uint32_t rpc;                 /** Return Program Counter (index into call_stack) */
+  uint32_t sp;                  /** Stack pointer (index into stack) */
   int32_t registers[R_MAX];     /** Registers */
 
   svm_i32_buffer_t stack;       /** Program Stack */
