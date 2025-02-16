@@ -46,10 +46,17 @@ extern "C" {
 #endif
 
 /**
- * Provides definition for call stack initial size, if not provided
+ * Provides definition for stack initial size, if not provided
  */
 #ifndef SVM_STACK_INIT_SIZE
 #define SVM_STACK_INIT_SIZE 32
+#endif
+
+/**
+ * Provides definition for max tasks initial size, if not provided
+ */
+#ifndef SVM_MAX_TASKS
+#define SVM_MAX_TASKS 4
 #endif
 
 /* Macros =================================================================== */
@@ -163,6 +170,7 @@ typedef enum {
   SVM_OK = 0,                   /** OK */
   SVM_ERR,                      /** Generic Error */
   SVM_ERR_NULL,                 /** Something non-nullable is NULL */
+  SVM_ERR_BAD_ALLOC,            /** Allocation error */
   SVM_ERR_NOT_RUNNING,          /** Runtime Not Running */
   SVM_ERR_CODE_OVERFLOW,        /** Overflow in code */
   SVM_ERR_ARG_NOT_REG,          /** Expected register */
@@ -170,11 +178,13 @@ typedef enum {
   SVM_ERR_CALL_STK_OVERFLOW,    /** Overflow in call stack */
   SVM_ERR_CALL_STK_UNDERFLOW,   /** Underflow in call stack */
   SVM_ERR_UNKNOWN_INSTRUCTION,  /** Unknown instruction */
+  SVM_ERR_TASK_NOT_FOUND,       /** Requested task not found */
+  SVM_ERR_TASK_SWITCH_BLOCKED,  /** Task switching requested, but it's blocked externally */
 } svm_error_t;
 
 /* Types ==================================================================== */
 /**
- *
+ * Buffer of int32_t
  */
 typedef struct {
   int32_t * buffer;
@@ -208,11 +218,12 @@ typedef struct {
 } svm_code_t;
 
 /**
- * SVM Runtime Context
+ * Single task (thread) execution context
  */
-typedef struct {
+typedef struct svm_task_t {
+  struct svm_task_t * next;     /** Next task (NULL if last) */
+
   struct __PACKED {
-    bool running  : 1;          /** Is VM running flag */
     bool eq       : 1;          /** Equality flag */
     bool ne       : 1;          /** Not Equal flag */
     bool lt       : 1;          /** Less Than flag */
@@ -223,12 +234,27 @@ typedef struct {
     bool z        : 1;          /** Zero flag */
   } flags;
 
-  uint32_t pc;                  /** Program Counter */
-  uint32_t rpc;                 /** Return Program Counter */
+  uint32_t pc;                  /** Program Counter (index into code) */
+  uint32_t rpc;                 /** Return Program Counter (index into call_stack) */
   int32_t registers[R_MAX];     /** Registers */
 
   svm_i32_buffer_t stack;       /** Program Stack */
   svm_i32_buffer_t call_stack;  /** Call Stack */
+} svm_task_t;
+
+/**
+ * SVM Runtime Context
+ */
+typedef struct {
+  struct __PACKED {
+    bool running           : 1; /** Is VM running flag */
+    bool task_switch_block : 1; /** Block task switching */
+  } flags;
+
+  struct {
+    svm_task_t * current;
+    svm_task_t * head;
+  } task;
 
   svm_code_t * code;            /** Executable code context */
 
@@ -249,6 +275,16 @@ typedef struct {
 svm_error_t svm_init(svm_t * vm, void * ctx);
 
 /**
+ * De-initialize SVM context
+ *
+ * @param vm SVM Context
+ *
+ * @retval SVM_OK If operation completed successfully
+ * TODO: describe retvals
+ */
+svm_error_t svm_deinit(svm_t * vm);
+
+/**
  * Load instruction buffer into the VM
  *
  * @param vm SVM Context
@@ -258,6 +294,16 @@ svm_error_t svm_init(svm_t * vm, void * ctx);
  * @retval SVM_ERR_NULL If pointer to vm or buffer is NULL, or size is 0
  */
 svm_error_t svm_load(svm_t * vm, svm_code_t * code);
+
+/**
+ * Unload instructions & tasks from VM
+ *
+ * @param vm SVM Context
+ *
+ * @retval SVM_OK If operation completed successfully
+ * TODO: describe retvals
+ */
+svm_error_t svm_unload(svm_t * vm);
 
 /**
  * Run VM for 1 cycle
@@ -277,6 +323,55 @@ svm_error_t svm_load(svm_t * vm, svm_code_t * code);
  * @retval SVM_ERR_UNKNOWN_INSTRUCTION Unknown instruction
  */
 svm_error_t svm_cycle(svm_t * vm);
+
+/**
+ * Initialize task context
+ *
+ * @param vm SVM instance
+ * @param task Task instance
+ * @param pc PC where task should start it's execution
+ * @param registers Registers state that task is expecting at start
+ */
+svm_error_t svm_task_init(svm_t * vm, svm_task_t * task, uint32_t pc, int32_t (*registers)[R_MAX]);
+
+/**
+ * De-Initialize task context and release all resources
+ *
+ * @param task Task instance
+ */
+svm_error_t svm_task_deinit(svm_task_t * task);
+
+/**
+ * Create task in VM context
+ *
+ * @param vm SVM instance
+ * @param pc PC where task should start it's execution
+ * @param registers Registers state that task is expecting at start
+ */
+svm_error_t svm_task_create(svm_t * vm, uint32_t pc, int32_t (*registers)[R_MAX]);
+
+/**
+ * Remove task from VM context
+ *
+ * @param vm SVM instance
+ * @param task Task instance to be removed
+ */
+svm_error_t svm_task_remove(svm_t * vm, svm_task_t * task);
+
+/**
+ * Perform task switch
+ *
+ * @param vm SVM instance
+ */
+svm_error_t svm_task_switch(svm_t * vm);
+
+/**
+ * Block/Unblock task switching
+ *
+ * @param vm SVM instance
+ * @param block Task switch blocking state
+ */
+svm_error_t svm_task_block(svm_t * vm, bool block);
 
 /**
  * Packs instruction from it's contents

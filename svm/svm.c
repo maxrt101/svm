@@ -26,9 +26,9 @@ static int32_t svm_get_arg_value(svm_t * vm, svm_arg_type_t type) {
 
   if (type > ARG_NONE && type < ARG_IMM) {
     svm_register_t reg = svm_arg_to_reg(type);
-    return reg < R_MAX ? vm->registers[reg] : 0;
+    return reg < R_MAX ? vm->task.current->registers[reg] : 0;
   } else if (type == ARG_IMM) {
-    return vm->code->buffer[vm->pc++];
+    return vm->code->buffer[vm->task.current->pc++];
   } else {
     // TODO: Signal error
     return 0;
@@ -40,14 +40,14 @@ static bool svm_check_condition(svm_t * vm, svm_ext_t ext) {
 
   switch (ext) {
     case EXT_NONE: return true;
-    case EXT_EQ:   return vm->flags.eq;
-    case EXT_NE:   return vm->flags.ne;
-    case EXT_LT:   return vm->flags.lt;
-    case EXT_LE:   return vm->flags.le;
-    case EXT_GT:   return vm->flags.gt;
-    case EXT_GE:   return vm->flags.ge;
-    case EXT_NZ:   return vm->flags.nz;
-    case EXT_Z:    return vm->flags.z;
+    case EXT_EQ:   return vm->task.current->flags.eq;
+    case EXT_NE:   return vm->task.current->flags.ne;
+    case EXT_LT:   return vm->task.current->flags.lt;
+    case EXT_LE:   return vm->task.current->flags.le;
+    case EXT_GT:   return vm->task.current->flags.gt;
+    case EXT_GE:   return vm->task.current->flags.ge;
+    case EXT_NZ:   return vm->task.current->flags.nz;
+    case EXT_Z:    return vm->task.current->flags.z;
     default:
       return false;
   }
@@ -57,9 +57,9 @@ static void svm_check_value_set_nz_z_flags(svm_t * vm, int32_t value) {
   SVM_ASSERT_RETURN(vm);
 
   if (value) {
-    vm->flags.nz = true;
+    vm->task.current->flags.nz = true;
   } else {
-    vm->flags.z = true;
+    vm->task.current->flags.z = true;
   }
 }
 
@@ -68,46 +68,46 @@ static int svm_set_flag_by_ext(svm_t * vm, svm_ext_t ext, bool value) {
 
   switch (ext) {
     case EXT_NONE:
-      vm->flags.eq = value;
-      vm->flags.ne = value;
-      vm->flags.lt = value;
-      vm->flags.le = value;
-      vm->flags.gt = value;
-      vm->flags.ge = value;
-      vm->flags.nz = value;
-      vm->flags.z = value;
+      vm->task.current->flags.eq = value;
+      vm->task.current->flags.ne = value;
+      vm->task.current->flags.lt = value;
+      vm->task.current->flags.le = value;
+      vm->task.current->flags.gt = value;
+      vm->task.current->flags.ge = value;
+      vm->task.current->flags.nz = value;
+      vm->task.current->flags.z = value;
       break;
 
     case EXT_EQ:
-      vm->flags.eq = value;
+      vm->task.current->flags.eq = value;
       break;
 
     case EXT_NE:
-      vm->flags.ne = value;
+      vm->task.current->flags.ne = value;
       break;
 
     case EXT_LT:
-      vm->flags.lt = value;
+      vm->task.current->flags.lt = value;
       break;
 
     case EXT_LE:
-      vm->flags.le = value;
+      vm->task.current->flags.le = value;
       break;
 
     case EXT_GT:
-      vm->flags.gt = value;
+      vm->task.current->flags.gt = value;
       break;
 
     case EXT_GE:
-      vm->flags.ge = value;
+      vm->task.current->flags.ge = value;
       break;
 
     case EXT_NZ:
-      vm->flags.nz = value;
+      vm->task.current->flags.nz = value;
       break;
 
     case EXT_Z:
-      vm->flags.z = value;
+      vm->task.current->flags.z = value;
       break;
 
     default:
@@ -147,26 +147,30 @@ svm_error_t svm_init(svm_t * vm, void * ctx) {
   return SVM_OK;
 }
 
+svm_error_t svm_deinit(svm_t * vm) {
+  SVM_ASSERT_RETURN(vm, SVM_ERR_NULL);
+
+  return svm_unload(vm);
+}
+
 svm_error_t svm_load(svm_t * vm, svm_code_t * code) {
   SVM_ASSERT_RETURN(vm && code, SVM_ERR_NULL);
 
   vm->code = code;
-  vm->pc = 0;
+
+  int32_t registers[R_MAX] = {0};
+  SVM_ERROR_CHECK_RETURN(svm_task_create(vm, 0, &registers));
+
   vm->flags.running = true;
 
-  if (vm->call_stack.buffer) {
-    free(vm->call_stack.buffer);
-  }
+  // Perform first switch to set task->current
+  return svm_task_switch(vm);
+}
 
-  vm->call_stack.size = code->meta.call_stack_size ? code->meta.call_stack_size : SVM_CALL_STACK_INIT_SIZE;
-  SVM_REALLOC_CHECK(vm->call_stack.buffer, vm->call_stack.size);
+svm_error_t svm_unload(svm_t * vm) {
+  SVM_ASSERT_RETURN(vm, SVM_ERR_NULL);
 
-  if (vm->stack.buffer) {
-    free(vm->stack.buffer);
-  }
-
-  vm->stack.size = code->meta.stack_size ? code->meta.stack_size : SVM_STACK_INIT_SIZE;
-  SVM_REALLOC_CHECK(vm->stack.buffer, vm->stack.size);
+  // TODO: release all allocated resources
 
   return SVM_OK;
 }
@@ -178,21 +182,21 @@ svm_error_t svm_cycle(svm_t * vm) {
     return SVM_ERR_NOT_RUNNING;
   }
 
-  if (vm->pc >= vm->code->size) {
+  if (vm->task.current->pc >= vm->code->size) {
     vm->flags.running = false;
     return SVM_ERR_CODE_OVERFLOW;
   }
 
-  svm_instruction_t * instruction = (svm_instruction_t *) &vm->code->buffer[vm->pc++];
+  svm_instruction_t * instruction = (svm_instruction_t *) &vm->code->buffer[vm->task.current->pc++];
 
 #if USE_SVM_DEBUG_CYCLE
   printf(
       "%04x | %-3s%-3s %-10s %-10s\n",
-      vm->pc - 1,
+      vm->task.current->pc - 1,
       svm_opcode2str(instruction->op),
       svm_ext2str(instruction->ext, true),
-      svm_get_arg_str(vm->code->buffer, vm->pc, instruction->arg1, false),
-      svm_get_arg_str(vm->code->buffer, vm->pc, instruction->arg2, instruction->arg1 == ARG_IMM)
+      svm_get_arg_str(vm->code->buffer, vm->task.current->pc, instruction->arg1, false),
+      svm_get_arg_str(vm->code->buffer, vm->task.current->pc, instruction->arg2, instruction->arg1 == ARG_IMM)
   );
 #endif
 
@@ -211,8 +215,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] = arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] = arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -222,8 +226,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] += arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] += arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -233,8 +237,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] -= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] -= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
 
       }
       break;
@@ -245,8 +249,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] *= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] *= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -256,8 +260,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] /= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] /= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -267,8 +271,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] &= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] &= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -278,8 +282,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] |= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] |= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -289,8 +293,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] ^= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] ^= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -300,8 +304,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] <<= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] <<= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -311,8 +315,8 @@ svm_error_t svm_cycle(svm_t * vm) {
       if (svm_check_condition(vm, instruction->ext)) {
         svm_register_t reg = svm_arg_to_reg(instruction->arg1);
         SVM_ASSERT_RETURN(reg < R_MAX, SVM_ERR_ARG_NOT_REG);
-        vm->registers[reg] >>= arg2;
-        svm_check_value_set_nz_z_flags(vm, vm->registers[reg]);
+        vm->task.current->registers[reg] >>= arg2;
+        svm_check_value_set_nz_z_flags(vm, vm->task.current->registers[reg]);
       }
       break;
     }
@@ -323,27 +327,27 @@ svm_error_t svm_cycle(svm_t * vm) {
       int32_t arg2 = svm_get_arg_value(vm, instruction->arg2);
 
       if (arg1 == arg2) {
-        vm->flags.eq = true;
+        vm->task.current->flags.eq = true;
       }
 
       if (arg1 != arg2) {
-        vm->flags.ne = true;
+        vm->task.current->flags.ne = true;
       }
 
       if (arg1 > arg2) {
-        vm->flags.gt = true;
+        vm->task.current->flags.gt = true;
       }
 
       if (arg1 >= arg2) {
-        vm->flags.ge = true;
+        vm->task.current->flags.ge = true;
       }
 
       if (arg1 < arg2) {
-        vm->flags.lt = true;
+        vm->task.current->flags.lt = true;
       }
 
       if (arg1 <= arg2) {
-        vm->flags.le = true;
+        vm->task.current->flags.le = true;
       }
 
       break;
@@ -358,7 +362,7 @@ svm_error_t svm_cycle(svm_t * vm) {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
       if (svm_check_condition(vm, instruction->ext)) {
         if (arg1 < vm->code->size) {
-          vm->pc = arg1;
+          vm->task.current->pc = arg1;
         } else {
           return SVM_ERR_JMP_OVERFLOW;
         }
@@ -369,12 +373,12 @@ svm_error_t svm_cycle(svm_t * vm) {
     case OP_INV: {
       int32_t arg1 = svm_get_arg_value(vm, instruction->arg1);
       if (svm_check_condition(vm, instruction->ext)) {
-        if (vm->rpc + 1 >= vm->call_stack.size) {
+        if (vm->task.current->rpc + 1 >= vm->task.current->call_stack.size) {
           return SVM_ERR_CALL_STK_OVERFLOW;
         }
-        vm->call_stack.buffer[vm->rpc++] = vm->pc;
+        vm->task.current->call_stack.buffer[vm->task.current->rpc++] = vm->task.current->pc;
         if (arg1 < vm->code->size) {
-          vm->pc = arg1;
+          vm->task.current->pc = arg1;
         } else {
           return SVM_ERR_JMP_OVERFLOW;
         }
@@ -383,8 +387,8 @@ svm_error_t svm_cycle(svm_t * vm) {
     }
 
     case OP_RET: {
-      if (vm->rpc > 0) {
-        vm->pc = vm->call_stack.buffer[--vm->rpc];
+      if (vm->task.current->rpc > 0) {
+        vm->task.current->pc = vm->task.current->call_stack.buffer[--vm->task.current->rpc];
       } else {
         return SVM_ERR_CALL_STK_UNDERFLOW;
       }
@@ -392,7 +396,7 @@ svm_error_t svm_cycle(svm_t * vm) {
     }
 
     case OP_SYS: {
-      svm_sys_handler(vm->ctx, &vm->registers, svm_get_arg_value(vm, instruction->arg1));
+      svm_sys_handler(vm->ctx, &vm->task.current->registers, svm_get_arg_value(vm, instruction->arg1));
       break;
     }
 
@@ -408,7 +412,7 @@ svm_error_t svm_cycle(svm_t * vm) {
     printf(
         "%-3s %10d    ",
         svm_register2str(reg),
-        vm->registers[reg]
+        vm->task.current->registers[reg]
     );
     if (reg+1 != R_MAX && (reg+1) % 2 == 0) {
       printf("\n");
@@ -424,6 +428,111 @@ svm_error_t svm_cycle(svm_t * vm) {
   }
   printf("\n     |\n");
 #endif
+
+  return SVM_OK;
+}
+
+svm_error_t svm_task_init(svm_t * vm, svm_task_t * task, uint32_t pc, int32_t (*registers)[R_MAX]) {
+  SVM_ASSERT_RETURN(vm && task && registers, SVM_ERR_NULL);
+
+  memset(task, 0, sizeof(*task));
+
+  task->pc = pc;
+  memcpy(task->registers, registers, sizeof(*registers));
+
+  task->call_stack.size = vm->code->meta.call_stack_size ? vm->code->meta.call_stack_size : SVM_CALL_STACK_INIT_SIZE;
+  SVM_REALLOC_CHECK(task->call_stack.buffer, task->call_stack.size);
+
+  task->stack.size = vm->code->meta.stack_size ? vm->code->meta.stack_size : SVM_STACK_INIT_SIZE;
+  SVM_REALLOC_CHECK(task->stack.buffer, task->stack.size);
+
+  return SVM_OK;
+}
+
+svm_error_t svm_task_deinit(svm_task_t * task) {
+  SVM_ASSERT_RETURN(task, SVM_ERR_NULL);
+
+  if (task->call_stack.buffer) {
+    svm_free(task->call_stack.buffer);
+  }
+
+  if (task->stack.buffer) {
+    svm_free(task->stack.buffer);
+  }
+
+  return SVM_OK;
+}
+
+svm_error_t svm_task_create(svm_t * vm, uint32_t pc, int32_t (*registers)[R_MAX]) {
+  SVM_ASSERT_RETURN(vm && registers, SVM_ERR_NULL);
+
+  svm_task_t * task = svm_malloc(sizeof(svm_task_t));
+
+  SVM_ASSERT_RETURN(task, SVM_ERR_BAD_ALLOC);
+
+  SVM_ERROR_CHECK_RETURN(svm_task_init(vm, task, pc, registers));
+
+  if (vm->task.head) {
+    svm_task_t * tmp = vm->task.head;
+
+    while (tmp->next) {
+      tmp = tmp->next;
+    }
+
+    tmp->next = task;
+  } else {
+    vm->task.head = task;
+  }
+
+  return SVM_OK;
+}
+
+svm_error_t svm_task_remove(svm_t * vm, svm_task_t * task) {
+  SVM_ASSERT_RETURN(vm && task, SVM_ERR_NULL);
+
+  if (vm->task.head == task) {
+    vm->task.head = vm->task.head->next;
+  } else {
+    svm_task_t * tmp = vm->task.head->next;
+
+    while (tmp) {
+      if (task->next == task) {
+        break;
+      }
+      tmp = tmp->next;
+    }
+
+    SVM_ASSERT_RETURN(tmp, SVM_ERR_TASK_NOT_FOUND);
+
+    tmp->next = task->next;
+  }
+
+  return svm_task_deinit(task);
+}
+
+svm_error_t svm_task_switch(svm_t * vm) {
+  SVM_ASSERT_RETURN(vm, SVM_ERR_NULL);
+
+  SVM_ASSERT_RETURN(!vm->flags.task_switch_block, SVM_ERR_TASK_SWITCH_BLOCKED);
+
+  if (!vm->task.current) {
+    vm->task.current = vm->task.head;
+    return SVM_OK;
+  }
+
+  vm->task.current = vm->task.current->next;
+
+  if (!vm->task.current) {
+    vm->task.current = vm->task.head;
+  }
+
+  return SVM_OK;
+}
+
+svm_error_t svm_task_block(svm_t * vm, bool block) {
+  SVM_ASSERT_RETURN(vm, SVM_ERR_NULL);
+
+  vm->flags.task_switch_block = block;
 
   return SVM_OK;
 }

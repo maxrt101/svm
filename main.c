@@ -184,6 +184,8 @@ int main(int argc, char ** argv) {
         }
 
         printf("Execution ended. Took %d cycles\n", cycles);
+
+        svm_deinit(&vm);
       }
 
       svm_asm_free(&ctx);
